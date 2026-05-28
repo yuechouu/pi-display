@@ -1,0 +1,8 @@
+{
+  "name": "pi-display",
+  "version": "0.1.0",
+  "description": "Claude Code inspired display theme and tool status for Pi Agent",
+  "main": "index.ts",
+  "keywords": ["pi-extension", "pi-agent", "theme", "display"],
+  "license": "MIT"
+}

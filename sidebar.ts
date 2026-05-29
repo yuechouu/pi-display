@@ -29,16 +29,40 @@ export default function (pi: ExtensionAPI) {
   let ctxRef: ExtensionContext | null = null;
   let currentMode = "coding";
   let gitBranch = "";
-  let gitFiles: { name: string; additions: number; deletions: number }[] = [];
+  let sessionFiles: Map<string, { tool: string; count: number }> = new Map();
 
-  function reconstructTodos(ctx: ExtensionContext) {
+  function reconstructState(ctx: ExtensionContext) {
     todos = [];
+    sessionFiles = new Map();
+
     for (const entry of ctx.sessionManager.getBranch()) {
       if (entry.type !== "message") continue;
       const msg = entry.message;
-      if (msg.role !== "toolResult" || msg.toolName !== "todo") continue;
-      const details = msg.details as TodoDetails | undefined;
-      if (details?.todos) todos = details.todos;
+
+      // Track todos
+      if (msg.role === "toolResult" && msg.toolName === "todo") {
+        const details = msg.details as TodoDetails | undefined;
+        if (details?.todos) todos = details.todos;
+      }
+
+      // Track files from tool calls
+      if (msg.role === "toolResult" && msg.toolName) {
+        const tool = msg.toolName;
+        if (["edit", "write", "read"].includes(tool)) {
+          // Extract file path from tool call args
+          const args = (msg as any).toolInput || {};
+          const filePath = args.path || args.file_path || "";
+          if (filePath) {
+            const name = filePath.split(/[/\\]/).pop() || filePath;
+            const existing = sessionFiles.get(name);
+            if (existing) {
+              existing.count++;
+            } else {
+              sessionFiles.set(name, { tool, count: 1 });
+            }
+          }
+        }
+      }
     }
   }
 
@@ -51,17 +75,6 @@ export default function (pi: ExtensionAPI) {
     }
   }
 
-  async function refreshGitFiles() {
-    try {
-      const result = await pi.exec("git", ["diff", "--numstat", "HEAD"], { timeout: 3000 });
-      gitFiles = result.stdout.trim().split("\n").filter(Boolean).map(line => {
-        const [add, del, name] = line.split("\t");
-        return { name, additions: parseInt(add) || 0, deletions: parseInt(del) || 0 };
-      }).slice(0, 10);
-    } catch {
-      gitFiles = [];
-    }
-  }
 
   function computeSessionCost(ctx: ExtensionContext): number {
     let cost = 0;
@@ -103,16 +116,14 @@ export default function (pi: ExtensionAPI) {
     if (gitBranch) c.addChild(new Text(`  ${muted("git")}   ${text(gitBranch)}`, 0, 0));
     c.addChild(new Text(`  ${muted("mode")}  ${text(currentMode)}`, 0, 0));
 
-    if (gitFiles.length > 0) {
+    if (sessionFiles.size > 0) {
       line();
       sp();
-      c.addChild(new Text(section(`  Files ${muted(`(${gitFiles.length})`)}`), 0, 0));
+      c.addChild(new Text(section(`  Files ${muted(`(${sessionFiles.size})`)}`), 0, 0));
       sp();
-      for (const f of gitFiles) {
-        const add = f.additions > 0 ? dim(`+${f.additions}`) : "";
-        const del = f.deletions > 0 ? dim(` -${f.deletions}`) : "";
-        const stats = add || del ? ` ${add}${del}` : "";
-        c.addChild(new Text(`  ${text(trunc(f.name, W - 8))}${stats}`, 0, 0));
+      for (const [name, info] of sessionFiles) {
+        const toolIcon = info.tool === "edit" ? "✎" : info.tool === "write" ? "✓" : "○";
+        c.addChild(new Text(`  ${dim(toolIcon)} ${text(trunc(name, W - 6))}`, 0, 0));
       }
     }
 
@@ -219,24 +230,40 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("session_start", async (_event, ctx) => {
     ctxRef = ctx;
-    reconstructTodos(ctx);
+    reconstructState(ctx);
     await refreshGitBranch(ctx);
-    await refreshGitFiles();
     setTimeout(() => refresh(ctx), 300);
   });
 
   pi.on("tool_result", async (event, ctx) => {
+    // Track todos
     if (event.toolName === "todo") {
       const details = event.result?.details as TodoDetails | undefined;
       if (details?.todos) todos = details.todos;
-      refresh(ctx);
     }
+
+    // Track files from edit/write/read
+    if (["edit", "write", "read"].includes(event.toolName)) {
+      const args = (event as any).input || {};
+      const filePath = args.path || args.file_path || "";
+      if (filePath) {
+        const name = filePath.split(/[/\\]/).pop() || filePath;
+        const existing = sessionFiles.get(name);
+        if (existing) {
+          existing.count++;
+        } else {
+          sessionFiles.set(name, { tool: event.toolName, count: 1 });
+        }
+      }
+    }
+
+    refresh(ctx);
   });
 
   pi.on("turn_end", async (_event, ctx) => {
     ctxRef = ctx;
+    reconstructState(ctx);
     await refreshGitBranch(ctx);
-    await refreshGitFiles();
     refresh(ctx);
   });
 

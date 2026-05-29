@@ -39,26 +39,25 @@ export default function (pi: ExtensionAPI) {
       if (entry.type !== "message") continue;
       const msg = entry.message;
 
-      // Track todos
+      // Track todos from tool results
       if (msg.role === "toolResult" && msg.toolName === "todo") {
         const details = msg.details as TodoDetails | undefined;
         if (details?.todos) todos = details.todos;
       }
 
-      // Track files from tool calls
-      if (msg.role === "toolResult" && msg.toolName) {
-        const tool = msg.toolName;
-        if (["edit", "write", "read"].includes(tool)) {
-          // Extract file path from tool call args
-          const args = (msg as any).toolInput || {};
-          const filePath = args.path || args.file_path || "";
-          if (filePath) {
-            const name = filePath.split(/[/\\]/).pop() || filePath;
-            const existing = sessionFiles.get(name);
-            if (existing) {
-              existing.count++;
-            } else {
-              sessionFiles.set(name, { tool, count: 1 });
+      // Track files from assistant tool calls
+      if (msg.role === "assistant" && (msg as any).toolCalls) {
+        for (const tc of (msg as any).toolCalls) {
+          if (["edit", "write", "read"].includes(tc.name)) {
+            const filePath = tc.input?.path || tc.input?.file_path || "";
+            if (filePath) {
+              const name = filePath.split(/[/\\]/).pop() || filePath;
+              const existing = sessionFiles.get(name);
+              if (existing) {
+                existing.count++;
+              } else {
+                sessionFiles.set(name, { tool: tc.name, count: 1 });
+              }
             }
           }
         }
@@ -235,17 +234,11 @@ export default function (pi: ExtensionAPI) {
     setTimeout(() => refresh(ctx), 300);
   });
 
-  pi.on("tool_result", async (event, ctx) => {
-    // Track todos
-    if (event.toolName === "todo") {
-      const details = event.result?.details as TodoDetails | undefined;
-      if (details?.todos) todos = details.todos;
-    }
-
-    // Track files from edit/write/read
+  // Track file paths from tool calls (before execution)
+  pi.on("tool_call", async (event) => {
     if (["edit", "write", "read"].includes(event.toolName)) {
-      const args = (event as any).input || {};
-      const filePath = args.path || args.file_path || "";
+      const args = event.input || {};
+      const filePath = (args as any).path || (args as any).file_path || "";
       if (filePath) {
         const name = filePath.split(/[/\\]/).pop() || filePath;
         const existing = sessionFiles.get(name);
@@ -256,7 +249,13 @@ export default function (pi: ExtensionAPI) {
         }
       }
     }
+  });
 
+  pi.on("tool_result", async (event, ctx) => {
+    if (event.toolName === "todo") {
+      const details = event.result?.details as TodoDetails | undefined;
+      if (details?.todos) todos = details.todos;
+    }
     refresh(ctx);
   });
 

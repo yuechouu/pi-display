@@ -109,15 +109,16 @@ export default function (pi: ExtensionAPI) {
     if (cost > 0) c.addChild(new Text(`  ${muted("cost")}  ${text(`$${cost.toFixed(3)}`)}`, 0, 0));
 
     // ── Tasks ──
+    c.addChild(new Text("", 0, 0));
+    c.addChild(new Text(section("  Tasks"), 0, 0));
+    c.addChild(new Text("", 0, 0));
+
     if (todos.length > 0) {
       const done = todos.filter((t) => t.done).length;
       const total = todos.length;
       const pct = Math.round((done / total) * 100);
 
-      c.addChild(new Text("", 0, 0));
-      c.addChild(new Text(section(`  Tasks ${muted(`${done}/${total}`)}`), 0, 0));
-      c.addChild(new Text("", 0, 0));
-      c.addChild(new Text(`  ${miniBar(pct, 10)} ${text(`${pct}%`)}`, 0, 0));
+      c.addChild(new Text(`  ${muted(`${done}/${total}`)} ${miniBar(pct, 10)} ${text(`${pct}%`)}`, 0, 0));
 
       const pending = todos.filter((t) => !t.done);
       for (const t of pending.slice(0, 5)) {
@@ -127,6 +128,8 @@ export default function (pi: ExtensionAPI) {
 
       const completed = todos.filter((t) => t.done);
       if (completed.length > 0) c.addChild(new Text(`  ${dim(`✓ ${completed.length} done`)}`, 0, 0));
+    } else {
+      c.addChild(new Text(`  ${dim("no tasks")}`, 0, 0));
     }
 
     // ── Tools ──

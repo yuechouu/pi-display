@@ -1,13 +1,11 @@
 /**
- * Sidebar Extension — Crush-style info panel via footer
+ * Sidebar Extension — Crush-style right panel
  *
- * Since pi's TUI is vertical-only (no columns), we use setFooter()
- * to display sidebar information at the bottom:
- *   Line 1: model, thinking, context usage
- *   Line 2: todo progress + pending tasks
+ * Uses ctx.ui.setSidebar() for a persistent overlay on the right side.
+ * Shows: session info, model, context, git, tasks, tools
  *
  * Commands:
- *   /sidebar — toggle sidebar visibility
+ *   /sidebar — toggle visibility
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -23,10 +21,16 @@ interface TodoDetails {
   todos: Todo[];
 }
 
+const W = 28; // inner width
+
 export default function (pi: ExtensionAPI) {
-  let sidebarVisible = true;
+  let visible = true;
   let todos: Todo[] = [];
   let ctxRef: ExtensionContext | null = null;
+  let currentMode = "coding";
+  let gitBranch = "";
+
+  // ── Todo state ──────────────────────────────────────────
 
   function reconstructTodos(ctx: ExtensionContext) {
     todos = [];
@@ -35,131 +39,195 @@ export default function (pi: ExtensionAPI) {
       const msg = entry.message;
       if (msg.role !== "toolResult" || msg.toolName !== "todo") continue;
       const details = msg.details as TodoDetails | undefined;
-      if (details?.todos) {
-        todos = details.todos;
-      }
+      if (details?.todos) todos = details.todos;
     }
   }
 
-  function buildFooter(tui: any, theme: any, footerData: any) {
-    const container = new Container();
+  // ── Git branch ──────────────────────────────────────────
 
-    // Line 1: Model + Thinking + Context
-    const model = ctxRef?.model;
-    const thinking = ctxRef?.getThinkingLevel?.();
-    const usage = ctxRef?.getContextUsage?.();
+  async function refreshGitBranch(ctx: ExtensionContext) {
+    try {
+      const result = await pi.exec("git", ["branch", "--show-current"], { timeout: 3000 });
+      gitBranch = result.stdout.trim() || "";
+    } catch {
+      gitBranch = "";
+    }
+  }
 
-    let line1 = "";
-    if (model) {
-      line1 += theme.fg("accent", model.name || model.id);
-    }
-    if (thinking) {
-      line1 += (line1 ? theme.fg("muted", " · ") : "") + theme.fg("text", `thinking: ${thinking}`);
-    }
-    if (usage) {
-      const pct = Math.round(usage.percentage || 0);
-      const bar = buildMiniBar(pct, 10);
-      line1 += (line1 ? theme.fg("muted", " · ") : "") + bar + ` ${pct}%`;
-    }
+  // ── Session cost ────────────────────────────────────────
 
-    // Add git branch and cwd from footerData
-    const branch = footerData?.gitBranch;
-    const cwd = footerData?.cwd;
+  function computeSessionCost(ctx: ExtensionContext): number {
+    let cost = 0;
+    for (const entry of ctx.sessionManager.getEntries()) {
+      if (entry.type !== "message") continue;
+      const msg = entry.message;
+      if (msg.role === "assistant" && msg.usage?.cost?.total) {
+        cost += msg.usage.cost.total;
+      }
+    }
+    return cost;
+  }
+
+  // ── Build sidebar ───────────────────────────────────────
+
+  function build(theme: any): Container {
+    const c = new Container();
+    const sep = theme.fg("dim", "─".repeat(W));
+    const label = (s: string) => theme.fg("muted", `  ${s}  `);
+    const value = (s: string) => theme.fg("text", s);
+
+    // ── Header ──
+    c.addChild(new Text(sep, 0, 0));
+    c.addChild(new Text(theme.fg("accent", theme.bold("  PI")), 0, 0));
+    c.addChild(new Text(sep, 0, 0));
+    c.addChild(new Text("", 0, 0));
+
+    // ── Session ──
+    const sessionName = ctxRef?.sessionManager.getSessionName?.();
+    if (sessionName) c.addChild(new Text(label("Session") + value(sessionName), 0, 0));
+
+    const cwd = ctxRef?.cwd || "";
     if (cwd) {
-      line1 += (line1 ? theme.fg("muted", " · ") : "") + theme.fg("dim", cwd);
-    }
-    if (branch) {
-      line1 += theme.fg("dim", ` (${branch})`);
-    }
-
-    if (line1) {
-      container.addChild(new Text(line1, 0, 0));
+      const home = process.env.HOME || process.env.USERPROFILE || "";
+      const prettyCwd = cwd.replace(home, "~").replace(/\\/g, "/");
+      c.addChild(new Text(label("Cwd    ") + value(prettyCwd), 0, 0));
     }
 
-    // Line 2: Todo progress (if sidebar visible and has todos)
-    if (sidebarVisible && todos.length > 0) {
+    if (gitBranch) c.addChild(new Text(label("Branch ") + value(gitBranch), 0, 0));
+
+    const mode = currentMode;
+    c.addChild(new Text(label("Mode   ") + value(mode), 0, 0));
+    c.addChild(new Text("", 0, 0));
+
+    // ── Model ──
+    c.addChild(new Text(sep, 0, 0));
+    c.addChild(new Text(theme.fg("accent", theme.bold("  Model")), 0, 0));
+    c.addChild(new Text(sep, 0, 0));
+    c.addChild(new Text("", 0, 0));
+
+    const model = ctxRef?.model;
+    if (model) {
+      c.addChild(new Text(label("Name   ") + value(model.name || model.id), 0, 0));
+      if (model.provider) c.addChild(new Text(label("Provider") + value(model.provider), 0, 0));
+    }
+
+    const thinking = ctxRef?.getThinkingLevel?.();
+    if (thinking) c.addChild(new Text(label("Think  ") + value(thinking), 0, 0));
+
+    const usage = ctxRef?.getContextUsage?.();
+    if (usage) {
+      const pct = usage.percent ?? Math.round(((usage.tokens || 0) / usage.contextWindow) * 100);
+      const bar = miniBar(pct, 12);
+      c.addChild(new Text(label("Ctx    ") + bar + ` ${pct}%`, 0, 0));
+    }
+
+    const cost = ctxRef ? computeSessionCost(ctxRef) : 0;
+    if (cost > 0) c.addChild(new Text(label("Cost   ") + value(`$${cost.toFixed(3)}`), 0, 0));
+    c.addChild(new Text("", 0, 0));
+
+    // ── Tasks ──
+    c.addChild(new Text(sep, 0, 0));
+    c.addChild(new Text(theme.fg("accent", theme.bold("  Tasks")), 0, 0));
+    c.addChild(new Text(sep, 0, 0));
+    c.addChild(new Text("", 0, 0));
+
+    if (todos.length === 0) {
+      c.addChild(new Text(theme.fg("dim", "  No tasks"), 0, 0));
+    } else {
       const done = todos.filter((t) => t.done).length;
       const total = todos.length;
       const pct = Math.round((done / total) * 100);
+      c.addChild(new Text(`  ${value(`${done}/${total}`)} ${miniBar(pct, 10)} ${pct}%`, 0, 0));
+      c.addChild(new Text("", 0, 0));
 
-      let line2 = theme.fg("muted", "Tasks ") +
-        theme.fg("text", `${done}/${total}`) +
-        " " + buildMiniBar(pct, 10) +
-        theme.fg("muted", ` ${pct}%`);
-
-      // Show first 3 pending tasks
       const pending = todos.filter((t) => !t.done);
-      if (pending.length > 0) {
-        const preview = pending.slice(0, 3).map((t) => truncate(t.text, 20)).join(", ");
-        line2 += theme.fg("muted", " · ") + theme.fg("text", preview);
-        if (pending.length > 3) {
-          line2 += theme.fg("dim", ` +${pending.length - 3}`);
-        }
-      }
+      const completed = todos.filter((t) => t.done);
 
-      container.addChild(new Text(line2, 0, 0));
+      for (const t of pending.slice(0, 6)) {
+        c.addChild(new Text(`  ${theme.fg("dim", "•")} ${value(trunc(t.text, W - 5))}`, 0, 0));
+      }
+      if (pending.length > 6) c.addChild(new Text(theme.fg("dim", `  ... ${pending.length - 6} more`), 0, 0));
+      if (completed.length > 0) {
+        c.addChild(new Text("", 0, 0));
+        c.addChild(new Text(theme.fg("dim", `  ✓ ${completed.length} completed`), 0, 0));
+      }
+    }
+    c.addChild(new Text("", 0, 0));
+
+    // ── Tools ──
+    c.addChild(new Text(sep, 0, 0));
+    c.addChild(new Text(theme.fg("accent", theme.bold("  Tools")), 0, 0));
+    c.addChild(new Text(sep, 0, 0));
+    c.addChild(new Text("", 0, 0));
+
+    try {
+      const tools = pi.getActiveTools();
+      c.addChild(new Text(`  ${value(tools.join(" "))}`, 0, 0));
+    } catch {
+      c.addChild(new Text(theme.fg("dim", "  (unavailable)"), 0, 0));
     }
 
-    return container;
+    c.addChild(new Text("", 0, 0));
+    c.addChild(new Text(sep, 0, 0));
+    return c;
   }
 
-  function buildMiniBar(percent: number, width: number): string {
-    const filled = Math.round((percent / 100) * width);
-    return "█".repeat(filled) + "░".repeat(width - filled);
+  // ── Helpers ─────────────────────────────────────────────
+
+  function miniBar(pct: number, w: number): string {
+    const filled = Math.round((pct / 100) * w);
+    return "█".repeat(filled) + "░".repeat(w - filled);
   }
 
-  function truncate(s: string, max: number): string {
+  function trunc(s: string, max: number): string {
     return s.length <= max ? s : s.slice(0, max - 1) + "…";
   }
 
-  function updateFooter(ctx: ExtensionContext) {
-    try {
-      ctx.ui.setFooter((tui, theme, footerData) => {
-        try {
-          return buildFooter(tui, theme, footerData);
-        } catch (e) {
-          // Fallback: return a simple text component
-          return new Text("Sidebar error: " + String(e), 0, 0);
-        }
-      });
-    } catch (e) {
-      // setFooter might not be available
-      console.error("setFooter error:", e);
+  function refresh(ctx: ExtensionContext) {
+    if (!visible) {
+      ctx.ui.setSidebar(undefined);
+      return;
     }
+    ctx.ui.setSidebar((_tui, theme) => build(theme), { width: W + 4 });
   }
 
-  // ── Events ────────────────────────────────────────────────
+  // ── Events ──────────────────────────────────────────────
 
   pi.on("session_start", async (_event, ctx) => {
     ctxRef = ctx;
     reconstructTodos(ctx);
-    // Delay footer update to avoid conflict with initialization
-    setTimeout(() => updateFooter(ctx), 500);
+    await refreshGitBranch(ctx);
+    setTimeout(() => refresh(ctx), 300);
   });
 
   pi.on("tool_result", async (event, ctx) => {
     if (event.toolName === "todo") {
       const details = event.result?.details as TodoDetails | undefined;
-      if (details?.todos) {
-        todos = details.todos;
-        updateFooter(ctx);
-      }
+      if (details?.todos) todos = details.todos;
+      refresh(ctx);
     }
   });
 
   pi.on("turn_end", async (_event, ctx) => {
     ctxRef = ctx;
-    updateFooter(ctx);
+    await refreshGitBranch(ctx);
+    refresh(ctx);
   });
 
-  // ── Commands ──────────────────────────────────────────────
+  // Listen for mode changes
+  pi.events.on("mode_changed", ({ mode }: { mode: string }) => {
+    currentMode = mode;
+    if (ctxRef) refresh(ctxRef);
+  });
+
+  // ── Commands ────────────────────────────────────────────
 
   pi.registerCommand("sidebar", {
-    description: "Toggle sidebar/todo info in footer",
+    description: "Toggle sidebar visibility",
     handler: async (_args, ctx) => {
-      sidebarVisible = !sidebarVisible;
-      updateFooter(ctx);
-      ctx.ui.notify(sidebarVisible ? "Sidebar shown" : "Sidebar hidden", "info");
+      visible = !visible;
+      refresh(ctx);
+      ctx.ui.notify(visible ? "Sidebar shown" : "Sidebar hidden", "info");
     },
   });
 }

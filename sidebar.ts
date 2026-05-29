@@ -29,6 +29,7 @@ export default function (pi: ExtensionAPI) {
   let ctxRef: ExtensionContext | null = null;
   let currentMode = "coding";
   let gitBranch = "";
+  let gitFiles: { name: string; additions: number; deletions: number }[] = [];
 
   function reconstructTodos(ctx: ExtensionContext) {
     todos = [];
@@ -47,6 +48,18 @@ export default function (pi: ExtensionAPI) {
       gitBranch = result.stdout.trim() || "";
     } catch {
       gitBranch = "";
+    }
+  }
+
+  async function refreshGitFiles() {
+    try {
+      const result = await pi.exec("git", ["diff", "--numstat", "HEAD"], { timeout: 3000 });
+      gitFiles = result.stdout.trim().split("\n").filter(Boolean).map(line => {
+        const [add, del, name] = line.split("\t");
+        return { name, additions: parseInt(add) || 0, deletions: parseInt(del) || 0 };
+      }).slice(0, 10);
+    } catch {
+      gitFiles = [];
     }
   }
 
@@ -70,7 +83,6 @@ export default function (pi: ExtensionAPI) {
     const sp = () => c.addChild(new Text("", 0, 0));
 
     // ── Header ──
-    line();
     c.addChild(new Text(section("  PI"), 0, 0));
     line();
     sp();
@@ -90,6 +102,19 @@ export default function (pi: ExtensionAPI) {
 
     if (gitBranch) c.addChild(new Text(`  ${muted("git")}   ${text(gitBranch)}`, 0, 0));
     c.addChild(new Text(`  ${muted("mode")}  ${text(currentMode)}`, 0, 0));
+
+    if (gitFiles.length > 0) {
+      line();
+      sp();
+      c.addChild(new Text(section(`  Files ${muted(`(${gitFiles.length})`)}`), 0, 0));
+      sp();
+      for (const f of gitFiles) {
+        const add = f.additions > 0 ? dim(`+${f.additions}`) : "";
+        const del = f.deletions > 0 ? dim(` -${f.deletions}`) : "";
+        const stats = add || del ? ` ${add}${del}` : "";
+        c.addChild(new Text(`  ${text(trunc(f.name, W - 8))}${stats}`, 0, 0));
+      }
+    }
 
     line();
     sp();
@@ -196,6 +221,7 @@ export default function (pi: ExtensionAPI) {
     ctxRef = ctx;
     reconstructTodos(ctx);
     await refreshGitBranch(ctx);
+    await refreshGitFiles();
     setTimeout(() => refresh(ctx), 300);
   });
 
@@ -210,6 +236,7 @@ export default function (pi: ExtensionAPI) {
   pi.on("turn_end", async (_event, ctx) => {
     ctxRef = ctx;
     await refreshGitBranch(ctx);
+    await refreshGitFiles();
     refresh(ctx);
   });
 

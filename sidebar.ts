@@ -1,8 +1,8 @@
 /**
- * Sidebar Extension — Crush-style right panel
+ * Sidebar Extension — Crush-style right panel (clean, no separator lines)
  *
- * Uses ctx.ui.setSidebar() for a persistent overlay on the right side.
- * Shows: session info, model, context, git, tasks, tools
+ * Uses ctx.ui.setSidebar() for a proper two-column layout.
+ * Shows: session info, model, context, tasks, tools
  *
  * Commands:
  *   /sidebar — toggle visibility
@@ -21,7 +21,7 @@ interface TodoDetails {
   todos: Todo[];
 }
 
-const W = 28; // inner width
+const W = 28;
 
 export default function (pi: ExtensionAPI) {
   let visible = true;
@@ -29,8 +29,6 @@ export default function (pi: ExtensionAPI) {
   let ctxRef: ExtensionContext | null = null;
   let currentMode = "coding";
   let gitBranch = "";
-
-  // ── Todo state ──────────────────────────────────────────
 
   function reconstructTodos(ctx: ExtensionContext) {
     todos = [];
@@ -43,8 +41,6 @@ export default function (pi: ExtensionAPI) {
     }
   }
 
-  // ── Git branch ──────────────────────────────────────────
-
   async function refreshGitBranch(ctx: ExtensionContext) {
     try {
       const result = await pi.exec("git", ["branch", "--show-current"], { timeout: 3000 });
@@ -54,125 +50,109 @@ export default function (pi: ExtensionAPI) {
     }
   }
 
-  // ── Session cost ────────────────────────────────────────
-
   function computeSessionCost(ctx: ExtensionContext): number {
     let cost = 0;
     for (const entry of ctx.sessionManager.getEntries()) {
       if (entry.type !== "message") continue;
       const msg = entry.message;
-      if (msg.role === "assistant" && msg.usage?.cost?.total) {
-        cost += msg.usage.cost.total;
-      }
+      if (msg.role === "assistant" && msg.usage?.cost?.total) cost += msg.usage.cost.total;
     }
     return cost;
   }
 
-  // ── Build sidebar ───────────────────────────────────────
-
   function build(theme: any): Container {
     const c = new Container();
-    const sep = theme.fg("dim", "─".repeat(W));
-    const label = (s: string) => theme.fg("muted", `  ${s}  `);
-    const value = (s: string) => theme.fg("text", s);
-
-    // ── Header ──
-    c.addChild(new Text(sep, 0, 0));
-    c.addChild(new Text(theme.fg("accent", theme.bold("  PI")), 0, 0));
-    c.addChild(new Text(sep, 0, 0));
-    c.addChild(new Text("", 0, 0));
+    const dim = (s: string) => theme.fg("dim", s);
+    const muted = (s: string) => theme.fg("muted", s);
+    const text = (s: string) => theme.fg("text", s);
+    const accent = (s: string) => theme.fg("accent", s);
+    const section = (s: string) => theme.fg("accent", theme.bold(s));
 
     // ── Session ──
+    c.addChild(new Text("", 0, 0));
+    c.addChild(new Text(section("  Session"), 0, 0));
+    c.addChild(new Text("", 0, 0));
+
     const sessionName = ctxRef?.sessionManager.getSessionName?.();
-    if (sessionName) c.addChild(new Text(label("Session") + value(sessionName), 0, 0));
+    if (sessionName) c.addChild(new Text(`  ${muted("name")}  ${text(sessionName)}`, 0, 0));
 
     const cwd = ctxRef?.cwd || "";
     if (cwd) {
       const home = process.env.HOME || process.env.USERPROFILE || "";
-      const prettyCwd = cwd.replace(home, "~").replace(/\\/g, "/");
-      c.addChild(new Text(label("Cwd    ") + value(prettyCwd), 0, 0));
+      c.addChild(new Text(`  ${muted("cwd")}   ${text(cwd.replace(home, "~").replace(/\\/g, "/"))}`, 0, 0));
     }
 
-    if (gitBranch) c.addChild(new Text(label("Branch ") + value(gitBranch), 0, 0));
-
-    const mode = currentMode;
-    c.addChild(new Text(label("Mode   ") + value(mode), 0, 0));
-    c.addChild(new Text("", 0, 0));
+    if (gitBranch) c.addChild(new Text(`  ${muted("git")}   ${text(gitBranch)}`, 0, 0));
+    c.addChild(new Text(`  ${muted("mode")}  ${text(currentMode)}`, 0, 0));
 
     // ── Model ──
-    c.addChild(new Text(sep, 0, 0));
-    c.addChild(new Text(theme.fg("accent", theme.bold("  Model")), 0, 0));
-    c.addChild(new Text(sep, 0, 0));
+    c.addChild(new Text("", 0, 0));
+    c.addChild(new Text(section("  Model"), 0, 0));
     c.addChild(new Text("", 0, 0));
 
     const model = ctxRef?.model;
     if (model) {
-      c.addChild(new Text(label("Name   ") + value(model.name || model.id), 0, 0));
-      if (model.provider) c.addChild(new Text(label("Provider") + value(model.provider), 0, 0));
+      c.addChild(new Text(`  ${text(model.name || model.id)}`, 0, 0));
+      if (model.provider) c.addChild(new Text(`  ${muted(model.provider)}`, 0, 0));
     }
 
     const thinking = ctxRef?.getThinkingLevel?.();
-    if (thinking) c.addChild(new Text(label("Think  ") + value(thinking), 0, 0));
+    if (thinking) c.addChild(new Text(`  ${muted("think")} ${text(thinking)}`, 0, 0));
 
     const usage = ctxRef?.getContextUsage?.();
     if (usage) {
       const pct = usage.percent ?? Math.round(((usage.tokens || 0) / usage.contextWindow) * 100);
-      const bar = miniBar(pct, 12);
-      c.addChild(new Text(label("Ctx    ") + bar + ` ${pct}%`, 0, 0));
+      c.addChild(new Text(`  ${muted("ctx")}   ${miniBar(pct, 10)} ${text(`${pct}%`)}`, 0, 0));
     }
 
     const cost = ctxRef ? computeSessionCost(ctxRef) : 0;
-    if (cost > 0) c.addChild(new Text(label("Cost   ") + value(`$${cost.toFixed(3)}`), 0, 0));
-    c.addChild(new Text("", 0, 0));
+    if (cost > 0) c.addChild(new Text(`  ${muted("cost")}  ${text(`$${cost.toFixed(3)}`)}`, 0, 0));
 
     // ── Tasks ──
-    c.addChild(new Text(sep, 0, 0));
-    c.addChild(new Text(theme.fg("accent", theme.bold("  Tasks")), 0, 0));
-    c.addChild(new Text(sep, 0, 0));
-    c.addChild(new Text("", 0, 0));
-
-    if (todos.length === 0) {
-      c.addChild(new Text(theme.fg("dim", "  No tasks"), 0, 0));
-    } else {
+    if (todos.length > 0) {
       const done = todos.filter((t) => t.done).length;
       const total = todos.length;
       const pct = Math.round((done / total) * 100);
-      c.addChild(new Text(`  ${value(`${done}/${total}`)} ${miniBar(pct, 10)} ${pct}%`, 0, 0));
+
       c.addChild(new Text("", 0, 0));
+      c.addChild(new Text(section(`  Tasks ${muted(`${done}/${total}`)}`), 0, 0));
+      c.addChild(new Text("", 0, 0));
+      c.addChild(new Text(`  ${miniBar(pct, 10)} ${text(`${pct}%`)}`, 0, 0));
 
       const pending = todos.filter((t) => !t.done);
-      const completed = todos.filter((t) => t.done);
+      for (const t of pending.slice(0, 5)) {
+        c.addChild(new Text(`  ${dim("•")} ${text(trunc(t.text, W - 5))}`, 0, 0));
+      }
+      if (pending.length > 5) c.addChild(new Text(`  ${dim(`+${pending.length - 5} more`)}`, 0, 0));
 
-      for (const t of pending.slice(0, 6)) {
-        c.addChild(new Text(`  ${theme.fg("dim", "•")} ${value(trunc(t.text, W - 5))}`, 0, 0));
-      }
-      if (pending.length > 6) c.addChild(new Text(theme.fg("dim", `  ... ${pending.length - 6} more`), 0, 0));
-      if (completed.length > 0) {
-        c.addChild(new Text("", 0, 0));
-        c.addChild(new Text(theme.fg("dim", `  ✓ ${completed.length} completed`), 0, 0));
-      }
+      const completed = todos.filter((t) => t.done);
+      if (completed.length > 0) c.addChild(new Text(`  ${dim(`✓ ${completed.length} done`)}`, 0, 0));
     }
-    c.addChild(new Text("", 0, 0));
 
     // ── Tools ──
-    c.addChild(new Text(sep, 0, 0));
-    c.addChild(new Text(theme.fg("accent", theme.bold("  Tools")), 0, 0));
-    c.addChild(new Text(sep, 0, 0));
+    c.addChild(new Text("", 0, 0));
+    c.addChild(new Text(section("  Tools"), 0, 0));
     c.addChild(new Text("", 0, 0));
 
     try {
       const tools = pi.getActiveTools();
-      c.addChild(new Text(`  ${value(tools.join(" "))}`, 0, 0));
+      // Wrap tool names into lines that fit
+      let line = "  ";
+      for (const tool of tools) {
+        if (line.length + tool.length + 1 > W) {
+          c.addChild(new Text(muted(line), 0, 0));
+          line = "  ";
+        }
+        line += (line === " " ? "" : " ") + tool;
+      }
+      if (line.trim()) c.addChild(new Text(muted(line), 0, 0));
     } catch {
-      c.addChild(new Text(theme.fg("dim", "  (unavailable)"), 0, 0));
+      c.addChild(new Text(`  ${dim("(unavailable)")}`, 0, 0));
     }
 
     c.addChild(new Text("", 0, 0));
-    c.addChild(new Text(sep, 0, 0));
     return c;
   }
-
-  // ── Helpers ─────────────────────────────────────────────
 
   function miniBar(pct: number, w: number): string {
     const filled = Math.round((pct / 100) * w);
@@ -214,7 +194,6 @@ export default function (pi: ExtensionAPI) {
     refresh(ctx);
   });
 
-  // Listen for mode changes
   pi.events.on("mode_changed", ({ mode }: { mode: string }) => {
     currentMode = mode;
     if (ctxRef) refresh(ctxRef);

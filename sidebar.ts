@@ -66,11 +66,13 @@ export default function (pi: ExtensionAPI) {
     const muted = (s: string) => theme.fg("muted", s);
     const text = (s: string) => theme.fg("text", s);
     const section = (s: string) => theme.fg("accent", theme.bold(s));
-    const sp = () => c.addChild(new Text("", 0, 0)); // spacer
+    const line = () => c.addChild(new Text(dim("  " + "─".repeat(W - 2)), 0, 0));
+    const sp = () => c.addChild(new Text("", 0, 0));
 
-    // ── Logo ──
-    sp();
+    // ── Header ──
+    line();
     c.addChild(new Text(section("  PI"), 0, 0));
+    line();
     sp();
 
     // ── Session ──
@@ -89,7 +91,8 @@ export default function (pi: ExtensionAPI) {
     if (gitBranch) c.addChild(new Text(`  ${muted("git")}   ${text(gitBranch)}`, 0, 0));
     c.addChild(new Text(`  ${muted("mode")}  ${text(currentMode)}`, 0, 0));
 
-    sp(); // gap between sections
+    line();
+    sp();
 
     // ── Model ──
     c.addChild(new Text(section("  Model"), 0, 0));
@@ -113,7 +116,8 @@ export default function (pi: ExtensionAPI) {
     const cost = ctxRef ? computeSessionCost(ctxRef) : 0;
     if (cost > 0) c.addChild(new Text(`  ${muted("cost")}  ${text(`$${cost.toFixed(3)}`)}`, 0, 0));
 
-    sp(); // gap between sections
+    line();
+    sp();
 
     // ── Tasks ──
     c.addChild(new Text(section("  Tasks"), 0, 0));
@@ -142,7 +146,8 @@ export default function (pi: ExtensionAPI) {
       c.addChild(new Text(`  ${dim("no tasks")}`, 0, 0));
     }
 
-    sp(); // gap between sections
+    line();
+    sp();
 
     // ── Tools ──
     c.addChild(new Text(section("  Tools"), 0, 0));

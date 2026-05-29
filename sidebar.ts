@@ -113,9 +113,19 @@ export default function (pi: ExtensionAPI) {
   }
 
   function updateFooter(ctx: ExtensionContext) {
-    ctx.ui.setFooter((tui, theme, footerData) => {
-      return buildFooter(tui, theme, footerData);
-    });
+    try {
+      ctx.ui.setFooter((tui, theme, footerData) => {
+        try {
+          return buildFooter(tui, theme, footerData);
+        } catch (e) {
+          // Fallback: return a simple text component
+          return new Text("Sidebar error: " + String(e), 0, 0);
+        }
+      });
+    } catch (e) {
+      // setFooter might not be available
+      console.error("setFooter error:", e);
+    }
   }
 
   // ── Events ────────────────────────────────────────────────
@@ -123,7 +133,8 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
     ctxRef = ctx;
     reconstructTodos(ctx);
-    updateFooter(ctx);
+    // Delay footer update to avoid conflict with initialization
+    setTimeout(() => updateFooter(ctx), 500);
   });
 
   pi.on("tool_result", async (event, ctx) => {

@@ -30,6 +30,7 @@ export default function (pi: ExtensionAPI) {
   let currentMode = "coding";
   let gitBranch = "";
   let sessionFiles: Map<string, { tool: string; count: number }> = new Map();
+  let pendingToolPaths: Map<string, string> = new Map(); // toolCallId → filePath
 
   function reconstructState(ctx: ExtensionContext) {
     todos = [];
@@ -234,28 +235,36 @@ export default function (pi: ExtensionAPI) {
     setTimeout(() => refresh(ctx), 300);
   });
 
-  // Track file paths from tool calls (before execution)
+  // Track file paths from tool calls
   pi.on("tool_call", async (event) => {
     if (["edit", "write", "read"].includes(event.toolName)) {
-      const args = event.input || {};
-      const filePath = (args as any).path || (args as any).file_path || "";
+      const filePath = (event as any).input?.path || (event as any).input?.file_path || "";
       if (filePath) {
-        const name = filePath.split(/[/\\]/).pop() || filePath;
-        const existing = sessionFiles.get(name);
-        if (existing) {
-          existing.count++;
-        } else {
-          sessionFiles.set(name, { tool: event.toolName, count: 1 });
-        }
+        pendingToolPaths.set(event.toolCallId, filePath);
       }
     }
   });
 
   pi.on("tool_result", async (event, ctx) => {
+    // Track todos
     if (event.toolName === "todo") {
       const details = event.result?.details as TodoDetails | undefined;
       if (details?.todos) todos = details.todos;
     }
+
+    // Track files from completed tool calls
+    const filePath = pendingToolPaths.get(event.toolCallId);
+    if (filePath) {
+      pendingToolPaths.delete(event.toolCallId);
+      const name = filePath.split(/[/\\]/).pop() || filePath;
+      const existing = sessionFiles.get(name);
+      if (existing) {
+        existing.count++;
+      } else {
+        sessionFiles.set(name, { tool: event.toolName, count: 1 });
+      }
+    }
+
     refresh(ctx);
   });
 

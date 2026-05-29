@@ -29,7 +29,7 @@ export default function (pi: ExtensionAPI) {
   let ctxRef: ExtensionContext | null = null;
   let currentMode = "coding";
   let gitBranch = "";
-  let sessionFiles: Map<string, { tool: string; count: number; additions: number; deletions: number }> = new Map();
+  let sessionFiles: Map<string, { tool: string; count: number; firstContent: string; latestContent: string }> = new Map();
   let pendingToolPaths: Map<string, string> = new Map(); // toolCallId → filePath
 
   function reconstructState(ctx: ExtensionContext) {
@@ -68,51 +68,48 @@ export default function (pi: ExtensionAPI) {
         }
       }
 
-      // Match tool results with tool calls to get diff info
+      // Match tool results with tool calls
       if (msg.role === "toolResult" && (msg.toolName === "edit" || msg.toolName === "write")) {
         const toolCallId = (msg as any).toolCallId;
         const args = toolCallArgs.get(toolCallId);
-        const toolName = msg.toolName;
 
         if (args) {
           const filePath = args.path || args.file_path || "";
           if (filePath) {
-            let additions = 0;
-            let deletions = 0;
-
-            if (toolName === "edit" && args.edits) {
-              // For edit: count old/new text lines
-              for (const edit of args.edits) {
-                const oldLines = (edit.oldText || "").split("\n").length;
-                const newLines = (edit.newText || "").split("\n").length;
-                if (newLines > oldLines) additions += newLines - oldLines;
-                if (oldLines > newLines) deletions += oldLines - newLines;
-                if (newLines === oldLines && edit.oldText !== edit.newText) {
-                  additions += 1; // modified line
-                }
-              }
-            } else if (toolName === "write" && args.content) {
-              // For write: count lines in new content
-              additions = (args.content || "").split("\n").length;
-            }
-
-            addFile(filePath, toolName, additions, deletions);
+            const content = args.content || "";
+            addFile(filePath, msg.toolName, content);
           }
         }
       }
     }
   }
 
-  function addFile(filePath: string, tool: string, additions = 0, deletions = 0) {
+  function addFile(filePath: string, tool: string, content: string) {
     const name = filePath.split(/[/\\]/).pop() || filePath;
     const existing = sessionFiles.get(name);
     if (existing) {
       existing.count++;
-      existing.additions += additions;
-      existing.deletions += deletions;
+      existing.latestContent = content;
     } else {
-      sessionFiles.set(name, { tool, count: 1, additions, deletions });
+      sessionFiles.set(name, { tool, count: 1, firstContent: content, latestContent: content });
     }
+  }
+
+  function computeDiff(first: string, latest: string): { additions: number; deletions: number } {
+    if (!first && !latest) return { additions: 0, deletions: 0 };
+    if (!first) return { additions: latest.split("\n").length, deletions: 0 };
+    if (!latest) return { additions: 0, deletions: first.split("\n").length };
+    const firstLines = new Set(first.split("\n"));
+    const latestLines = new Set(latest.split("\n"));
+    let additions = 0;
+    let deletions = 0;
+    for (const line of latestLines) {
+      if (!firstLines.has(line)) additions++;
+    }
+    for (const line of firstLines) {
+      if (!latestLines.has(line)) deletions++;
+    }
+    return { additions, deletions };
   }
 
   async function refreshGitBranch(ctx: ExtensionContext) {
@@ -144,6 +141,23 @@ export default function (pi: ExtensionAPI) {
     const line = () => c.addChild(new Text(dim("  " + "─".repeat(W - 2)), 0, 0));
     const sp = () => c.addChild(new Text("", 0, 0));
 
+    // Count total content lines to compute spacing
+    const sectionCount = 4; // Session, Files, Model, Tasks, Tools
+    let totalContentLines = 0;
+    totalContentLines += 3; // PI + line + Session header
+    totalContentLines += 4; // name, cwd, git, mode
+    totalContentLines += sessionFiles.size > 0 ? sessionFiles.size + 2 : 3; // Files
+    totalContentLines += 5; // Model header + name + think + ctx + cost
+    totalContentLines += todos.length > 0 ? Math.min(todos.filter(t => !t.done).length, 5) + 4 : 3; // Tasks
+    totalContentLines += 3; // Tools header + content
+    totalContentLines += sectionCount * 2; // lines between sections
+
+    const termHeight = (process.stdout.rows || 40) - 2;
+    const extraSpace = Math.max(0, termHeight - totalContentLines);
+    const gapPerSection = Math.floor(extraSpace / sectionCount);
+
+    const gap = () => { for (let i = 0; i < gapPerSection; i++) sp(); };
+
     // ── Header ──
     c.addChild(new Text(section("  PI"), 0, 0));
     line();
@@ -166,14 +180,15 @@ export default function (pi: ExtensionAPI) {
     c.addChild(new Text(`  ${muted("mode")}  ${text(currentMode)}`, 0, 0));
 
     line();
-    sp();
+    gap();
     c.addChild(new Text(section(`  Files ${muted(`(${sessionFiles.size})`)}`), 0, 0));
     sp();
 
     if (sessionFiles.size > 0) {
       for (const [name, info] of sessionFiles) {
-        const add = info.additions > 0 ? dim(` +${info.additions}`) : "";
-        const del = info.deletions > 0 ? dim(` -${info.deletions}`) : "";
+        const diff = computeDiff(info.firstContent, info.latestContent);
+        const add = diff.additions > 0 ? dim(` +${diff.additions}`) : "";
+        const del = diff.deletions > 0 ? dim(` -${diff.deletions}`) : "";
         c.addChild(new Text(`  ${text(trunc(name, W - 10))}${add}${del}`, 0, 0));
       }
     } else {
@@ -181,7 +196,7 @@ export default function (pi: ExtensionAPI) {
     }
 
     line();
-    sp();
+    gap();
 
     // ── Model ──
     c.addChild(new Text(section("  Model"), 0, 0));
@@ -206,7 +221,7 @@ export default function (pi: ExtensionAPI) {
     if (cost > 0) c.addChild(new Text(`  ${muted("cost")}  ${text(`$${cost.toFixed(3)}`)}`, 0, 0));
 
     line();
-    sp();
+    gap();
 
     // ── Tasks ──
     c.addChild(new Text(section("  Tasks"), 0, 0));
@@ -236,7 +251,7 @@ export default function (pi: ExtensionAPI) {
     }
 
     line();
-    sp();
+    gap();
 
     // ── Tools ──
     c.addChild(new Text(section("  Tools"), 0, 0));

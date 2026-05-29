@@ -29,40 +29,89 @@ export default function (pi: ExtensionAPI) {
   let ctxRef: ExtensionContext | null = null;
   let currentMode = "coding";
   let gitBranch = "";
-  let sessionFiles: Map<string, { tool: string; count: number }> = new Map();
+  let sessionFiles: Map<string, { tool: string; count: number; additions: number; deletions: number }> = new Map();
   let pendingToolPaths: Map<string, string> = new Map(); // toolCallId → filePath
 
   function reconstructState(ctx: ExtensionContext) {
     todos = [];
     sessionFiles = new Map();
 
-    for (const entry of ctx.sessionManager.getBranch()) {
+    const entries = ctx.sessionManager.getEntries();
+
+    // First pass: collect tool call args and results
+    const toolCallArgs = new Map<string, any>(); // toolCallId → args
+    const toolCallNames = new Map<string, string>(); // toolCallId → toolName
+
+    for (const entry of entries) {
       if (entry.type !== "message") continue;
       const msg = entry.message;
 
-      // Track todos from tool results
+      // Track todos
       if (msg.role === "toolResult" && msg.toolName === "todo") {
         const details = msg.details as TodoDetails | undefined;
         if (details?.todos) todos = details.todos;
       }
 
-      // Track files from assistant tool calls
-      if (msg.role === "assistant" && (msg as any).toolCalls) {
-        for (const tc of (msg as any).toolCalls) {
-          if (["edit", "write", "read"].includes(tc.name)) {
-            const filePath = tc.input?.path || tc.input?.file_path || "";
-            if (filePath) {
-              const name = filePath.split(/[/\\]/).pop() || filePath;
-              const existing = sessionFiles.get(name);
-              if (existing) {
-                existing.count++;
-              } else {
-                sessionFiles.set(name, { tool: tc.name, count: 1 });
-              }
+      // Collect tool call args from assistant messages
+      if (msg.role === "assistant") {
+        const content = (msg as any).content;
+        if (Array.isArray(content)) {
+          for (const block of content) {
+            if (block.type === "toolCall" && (block.name === "edit" || block.name === "write")) {
+              const args = typeof block.arguments === "string"
+                ? JSON.parse(block.arguments)
+                : block.arguments || {};
+              toolCallArgs.set(block.id, args);
+              toolCallNames.set(block.id, block.name);
             }
           }
         }
       }
+
+      // Match tool results with tool calls to get diff info
+      if (msg.role === "toolResult" && (msg.toolName === "edit" || msg.toolName === "write")) {
+        const toolCallId = (msg as any).toolCallId;
+        const args = toolCallArgs.get(toolCallId);
+        const toolName = msg.toolName;
+
+        if (args) {
+          const filePath = args.path || args.file_path || "";
+          if (filePath) {
+            let additions = 0;
+            let deletions = 0;
+
+            if (toolName === "edit" && args.edits) {
+              // For edit: count old/new text lines
+              for (const edit of args.edits) {
+                const oldLines = (edit.oldText || "").split("\n").length;
+                const newLines = (edit.newText || "").split("\n").length;
+                if (newLines > oldLines) additions += newLines - oldLines;
+                if (oldLines > newLines) deletions += oldLines - newLines;
+                if (newLines === oldLines && edit.oldText !== edit.newText) {
+                  additions += 1; // modified line
+                }
+              }
+            } else if (toolName === "write" && args.content) {
+              // For write: count lines in new content
+              additions = (args.content || "").split("\n").length;
+            }
+
+            addFile(filePath, toolName, additions, deletions);
+          }
+        }
+      }
+    }
+  }
+
+  function addFile(filePath: string, tool: string, additions = 0, deletions = 0) {
+    const name = filePath.split(/[/\\]/).pop() || filePath;
+    const existing = sessionFiles.get(name);
+    if (existing) {
+      existing.count++;
+      existing.additions += additions;
+      existing.deletions += deletions;
+    } else {
+      sessionFiles.set(name, { tool, count: 1, additions, deletions });
     }
   }
 
@@ -116,15 +165,19 @@ export default function (pi: ExtensionAPI) {
     if (gitBranch) c.addChild(new Text(`  ${muted("git")}   ${text(gitBranch)}`, 0, 0));
     c.addChild(new Text(`  ${muted("mode")}  ${text(currentMode)}`, 0, 0));
 
+    line();
+    sp();
+    c.addChild(new Text(section(`  Files ${muted(`(${sessionFiles.size})`)}`), 0, 0));
+    sp();
+
     if (sessionFiles.size > 0) {
-      line();
-      sp();
-      c.addChild(new Text(section(`  Files ${muted(`(${sessionFiles.size})`)}`), 0, 0));
-      sp();
       for (const [name, info] of sessionFiles) {
-        const toolIcon = info.tool === "edit" ? "✎" : info.tool === "write" ? "✓" : "○";
-        c.addChild(new Text(`  ${dim(toolIcon)} ${text(trunc(name, W - 6))}`, 0, 0));
+        const add = info.additions > 0 ? dim(` +${info.additions}`) : "";
+        const del = info.deletions > 0 ? dim(` -${info.deletions}`) : "";
+        c.addChild(new Text(`  ${text(trunc(name, W - 10))}${add}${del}`, 0, 0));
       }
+    } else {
+      c.addChild(new Text(`  ${dim("no changes")}`, 0, 0));
     }
 
     line();
@@ -235,33 +288,26 @@ export default function (pi: ExtensionAPI) {
     setTimeout(() => refresh(ctx), 300);
   });
 
-  // Track file paths from tool calls
-  pi.on("tool_call", async (event) => {
-    if (["edit", "write", "read"].includes(event.toolName)) {
-      const filePath = (event as any).input?.path || (event as any).input?.file_path || "";
-      if (filePath) {
-        pendingToolPaths.set(event.toolCallId, filePath);
-      }
-    }
-  });
-
   pi.on("tool_result", async (event, ctx) => {
-    // Track todos
     if (event.toolName === "todo") {
       const details = event.result?.details as TodoDetails | undefined;
       if (details?.todos) todos = details.todos;
     }
 
-    // Track files from completed tool calls
-    const filePath = pendingToolPaths.get(event.toolCallId);
-    if (filePath) {
-      pendingToolPaths.delete(event.toolCallId);
-      const name = filePath.split(/[/\\]/).pop() || filePath;
-      const existing = sessionFiles.get(name);
-      if (existing) {
-        existing.count++;
-      } else {
-        sessionFiles.set(name, { tool: event.toolName, count: 1 });
+    // Track modified files from edit/write results
+    if (event.toolName === "edit" || event.toolName === "write") {
+      const text = event.result?.content?.map(c => (c as any).text || "").join("") || "";
+      // "Successfully replaced N block(s) in path/to/file"
+      const match = text.match(/in\s+(\S+)/);
+      if (match) {
+        const filePath = match[1];
+        const name = filePath.split(/[/\\]/).pop() || filePath;
+        const existing = sessionFiles.get(name);
+        if (existing) {
+          existing.count++;
+        } else {
+          sessionFiles.set(name, { tool: event.toolName, count: 1 });
+        }
       }
     }
 

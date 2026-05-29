@@ -44,7 +44,9 @@ export default function (pi: ExtensionAPI) {
 
   // Build the widget content
   function buildWidget(theme: any): string[] {
-    if (todos.length === 0) return [];
+    if (todos.length === 0) {
+      return [theme.fg("dim", " Tasks — no tasks yet (use todo tool to add)")];
+    }
 
     const done = todos.filter((t) => t.done).length;
     const total = todos.length;

@@ -1,8 +1,10 @@
 /**
- * Sidebar Extension — Crush-style right panel
+ * Sidebar Extension — Crush-style info panel via footer
  *
- * Shows: model info, todo list, session stats
- * Uses ctx.ui.custom() with overlay mode
+ * Since pi's TUI is vertical-only (no columns), we use setFooter()
+ * to display sidebar information at the bottom:
+ *   Line 1: model, thinking, context usage
+ *   Line 2: todo progress + pending tasks
  *
  * Commands:
  *   /sidebar — toggle sidebar visibility
@@ -21,11 +23,8 @@ interface TodoDetails {
   todos: Todo[];
 }
 
-const SIDEBAR_WIDTH = 30;
-
 export default function (pi: ExtensionAPI) {
   let sidebarVisible = true;
-  let overlayHandle: any = null;
   let todos: Todo[] = [];
   let ctxRef: ExtensionContext | null = null;
 
@@ -42,67 +41,66 @@ export default function (pi: ExtensionAPI) {
     }
   }
 
-  function buildSidebar(theme: any, width: number): string[] {
-    const lines: string[] = [];
-    const w = width - 2;
+  function buildFooter(tui: any, theme: any, footerData: any) {
+    const container = new Container();
 
-    lines.push(theme.fg("accent", "─".repeat(w)));
-    lines.push(theme.fg("text", theme.bold("  Session")));
-    lines.push(theme.fg("accent", "─".repeat(w)));
-    lines.push("");
-
+    // Line 1: Model + Thinking + Context
     const model = ctxRef?.model;
-    if (model) {
-      lines.push(theme.fg("muted", "  Model ") + theme.fg("text", model.name || model.id));
-    }
-
     const thinking = ctxRef?.getThinkingLevel?.();
-    if (thinking) {
-      lines.push(theme.fg("muted", "  Think  ") + theme.fg("text", thinking));
-    }
-
     const usage = ctxRef?.getContextUsage?.();
+
+    let line1 = "";
+    if (model) {
+      line1 += theme.fg("accent", model.name || model.id);
+    }
+    if (thinking) {
+      line1 += (line1 ? theme.fg("muted", " · ") : "") + theme.fg("text", `thinking: ${thinking}`);
+    }
     if (usage) {
       const pct = Math.round(usage.percentage || 0);
-      const bar = buildMiniBar(pct, 15);
-      lines.push(theme.fg("muted", "  Ctx    ") + bar + ` ${pct}%`);
+      const bar = buildMiniBar(pct, 10);
+      line1 += (line1 ? theme.fg("muted", " · ") : "") + bar + ` ${pct}%`;
     }
 
-    lines.push("");
-    lines.push(theme.fg("accent", "─".repeat(w)));
-    lines.push(theme.fg("text", theme.bold("  Tasks")));
-    lines.push(theme.fg("accent", "─".repeat(w)));
-    lines.push("");
+    // Add git branch and cwd from footerData
+    const branch = footerData?.gitBranch;
+    const cwd = footerData?.cwd;
+    if (cwd) {
+      line1 += (line1 ? theme.fg("muted", " · ") : "") + theme.fg("dim", cwd);
+    }
+    if (branch) {
+      line1 += theme.fg("dim", ` (${branch})`);
+    }
 
-    if (todos.length === 0) {
-      lines.push(theme.fg("dim", "  No tasks"));
-    } else {
+    if (line1) {
+      container.addChild(new Text(line1, 0, 0));
+    }
+
+    // Line 2: Todo progress (if sidebar visible and has todos)
+    if (sidebarVisible && todos.length > 0) {
       const done = todos.filter((t) => t.done).length;
       const total = todos.length;
       const pct = Math.round((done / total) * 100);
-      lines.push(theme.fg("muted", `  ${done}/${total} `) + buildMiniBar(pct, 10) + ` ${pct}%`);
-      lines.push("");
 
+      let line2 = theme.fg("muted", "Tasks ") +
+        theme.fg("text", `${done}/${total}`) +
+        " " + buildMiniBar(pct, 10) +
+        theme.fg("muted", ` ${pct}%`);
+
+      // Show first 3 pending tasks
       const pending = todos.filter((t) => !t.done);
-      const completed = todos.filter((t) => t.done);
-
-      for (const t of pending.slice(0, 8)) {
-        lines.push(`  ${theme.fg("dim", "•")} ${theme.fg("text", truncate(t.text, w - 6))}`);
+      if (pending.length > 0) {
+        const preview = pending.slice(0, 3).map((t) => truncate(t.text, 20)).join(", ");
+        line2 += theme.fg("muted", " · ") + theme.fg("text", preview);
+        if (pending.length > 3) {
+          line2 += theme.fg("dim", ` +${pending.length - 3}`);
+        }
       }
 
-      if (pending.length > 8) {
-        lines.push(theme.fg("dim", `  ... ${pending.length - 8} more`));
-      }
-
-      if (completed.length > 0) {
-        lines.push("");
-        lines.push(theme.fg("dim", `  ✓ ${completed.length} completed`));
-      }
+      container.addChild(new Text(line2, 0, 0));
     }
 
-    lines.push("");
-    lines.push(theme.fg("accent", "─".repeat(w)));
-    return lines;
+    return container;
   }
 
   function buildMiniBar(percent: number, width: number): string {
@@ -114,33 +112,10 @@ export default function (pi: ExtensionAPI) {
     return s.length <= max ? s : s.slice(0, max - 1) + "…";
   }
 
-  function showSidebar(ctx: ExtensionContext) {
-    if (!sidebarVisible) return;
-
-    const content = buildSidebar(ctx.ui.theme, SIDEBAR_WIDTH);
-
-    // Use custom() with overlay mode
-    ctx.ui.custom(
-      (tui, theme) => {
-        const container = new Container();
-        for (const line of content) {
-          container.addChild(new Text(line, 0, 0));
-        }
-        return container;
-      },
-      {
-        overlay: true,
-        overlayOptions: {
-          anchor: "right-center",
-          width: SIDEBAR_WIDTH,
-          maxHeight: "90%",
-          margin: { top: 1, right: 1, bottom: 1, left: 0 },
-        },
-        onHandle: (handle) => {
-          overlayHandle = handle;
-        },
-      },
-    );
+  function updateFooter(ctx: ExtensionContext) {
+    ctx.ui.setFooter((tui, theme, footerData) => {
+      return buildFooter(tui, theme, footerData);
+    });
   }
 
   // ── Events ────────────────────────────────────────────────
@@ -148,8 +123,7 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
     ctxRef = ctx;
     reconstructTodos(ctx);
-    // Delay sidebar show to avoid conflict with initial render
-    setTimeout(() => showSidebar(ctx), 1000);
+    updateFooter(ctx);
   });
 
   pi.on("tool_result", async (event, ctx) => {
@@ -157,28 +131,23 @@ export default function (pi: ExtensionAPI) {
       const details = event.result?.details as TodoDetails | undefined;
       if (details?.todos) {
         todos = details.todos;
+        updateFooter(ctx);
       }
     }
   });
 
   pi.on("turn_end", async (_event, ctx) => {
     ctxRef = ctx;
-    if (overlayHandle && sidebarVisible) {
-      overlayHandle.setHidden(false);
-    }
+    updateFooter(ctx);
   });
 
   // ── Commands ──────────────────────────────────────────────
 
   pi.registerCommand("sidebar", {
-    description: "Toggle sidebar visibility",
+    description: "Toggle sidebar/todo info in footer",
     handler: async (_args, ctx) => {
       sidebarVisible = !sidebarVisible;
-      if (overlayHandle) {
-        overlayHandle.setHidden(!sidebarVisible);
-      } else if (sidebarVisible) {
-        showSidebar(ctx);
-      }
+      updateFooter(ctx);
       ctx.ui.notify(sidebarVisible ? "Sidebar shown" : "Sidebar hidden", "info");
     },
   });

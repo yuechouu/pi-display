@@ -65,13 +65,17 @@ export default function (pi: ExtensionAPI) {
     const dim = (s: string) => theme.fg("dim", s);
     const muted = (s: string) => theme.fg("muted", s);
     const text = (s: string) => theme.fg("text", s);
-    const accent = (s: string) => theme.fg("accent", s);
     const section = (s: string) => theme.fg("accent", theme.bold(s));
+    const sp = () => c.addChild(new Text("", 0, 0)); // spacer
+
+    // ── Logo ──
+    sp();
+    c.addChild(new Text(section("  PI"), 0, 0));
+    sp();
 
     // ── Session ──
-    c.addChild(new Text("", 0, 0));
     c.addChild(new Text(section("  Session"), 0, 0));
-    c.addChild(new Text("", 0, 0));
+    sp();
 
     const sessionName = ctxRef?.sessionManager.getSessionName?.();
     if (sessionName) c.addChild(new Text(`  ${muted("name")}  ${text(sessionName)}`, 0, 0));
@@ -85,10 +89,11 @@ export default function (pi: ExtensionAPI) {
     if (gitBranch) c.addChild(new Text(`  ${muted("git")}   ${text(gitBranch)}`, 0, 0));
     c.addChild(new Text(`  ${muted("mode")}  ${text(currentMode)}`, 0, 0));
 
+    sp(); // gap between sections
+
     // ── Model ──
-    c.addChild(new Text("", 0, 0));
     c.addChild(new Text(section("  Model"), 0, 0));
-    c.addChild(new Text("", 0, 0));
+    sp();
 
     const model = ctxRef?.model;
     if (model) {
@@ -108,10 +113,11 @@ export default function (pi: ExtensionAPI) {
     const cost = ctxRef ? computeSessionCost(ctxRef) : 0;
     if (cost > 0) c.addChild(new Text(`  ${muted("cost")}  ${text(`$${cost.toFixed(3)}`)}`, 0, 0));
 
+    sp(); // gap between sections
+
     // ── Tasks ──
-    c.addChild(new Text("", 0, 0));
     c.addChild(new Text(section("  Tasks"), 0, 0));
-    c.addChild(new Text("", 0, 0));
+    sp();
 
     if (todos.length > 0) {
       const done = todos.filter((t) => t.done).length;
@@ -119,6 +125,7 @@ export default function (pi: ExtensionAPI) {
       const pct = Math.round((done / total) * 100);
 
       c.addChild(new Text(`  ${muted(`${done}/${total}`)} ${miniBar(pct, 10)} ${text(`${pct}%`)}`, 0, 0));
+      sp();
 
       const pending = todos.filter((t) => !t.done);
       for (const t of pending.slice(0, 5)) {
@@ -127,15 +134,19 @@ export default function (pi: ExtensionAPI) {
       if (pending.length > 5) c.addChild(new Text(`  ${dim(`+${pending.length - 5} more`)}`, 0, 0));
 
       const completed = todos.filter((t) => t.done);
-      if (completed.length > 0) c.addChild(new Text(`  ${dim(`✓ ${completed.length} done`)}`, 0, 0));
+      if (completed.length > 0) {
+        sp();
+        c.addChild(new Text(`  ${dim(`✓ ${completed.length} done`)}`, 0, 0));
+      }
     } else {
       c.addChild(new Text(`  ${dim("no tasks")}`, 0, 0));
     }
 
+    sp(); // gap between sections
+
     // ── Tools ──
-    c.addChild(new Text("", 0, 0));
     c.addChild(new Text(section("  Tools"), 0, 0));
-    c.addChild(new Text("", 0, 0));
+    sp();
 
     try {
       const tools = pi.getActiveTools();

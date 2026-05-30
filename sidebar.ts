@@ -29,7 +29,7 @@ export default function (pi: ExtensionAPI) {
   let ctxRef: ExtensionContext | null = null;
   let currentMode = "coding";
   let gitBranch = "";
-  let sessionFiles: Map<string, { tool: string; count: number; firstContent: string; latestContent: string }> = new Map();
+  let sessionFiles: Map<string, { tool: string; count: number; firstContent: string; latestContent: string; deleted?: boolean }> = new Map();
   let pendingToolPaths: Map<string, string> = new Map(); // toolCallId → filePath
 
   function reconstructState(ctx: ExtensionContext) {
@@ -78,6 +78,28 @@ export default function (pi: ExtensionAPI) {
           if (filePath) {
             const content = args.content || "";
             addFile(filePath, msg.toolName, content);
+          }
+        }
+      }
+
+      // Track bash rm commands
+      if (msg.role === "toolResult" && msg.toolName === "bash") {
+        const toolCallId = (msg as any).toolCallId;
+        const args = toolCallArgs.get(toolCallId);
+        if (args?.command) {
+          const cmd = args.command.trim();
+          const rmMatch = cmd.match(/^rm\s+(?:-[rf]+\s+)?(.+)$/);
+          if (rmMatch) {
+            const paths = rmMatch[1].split(/\s+/);
+            for (const p of paths) {
+              const name = p.split(/[/\\]/).pop() || p;
+              const existing = sessionFiles.get(name);
+              if (existing) {
+                existing.deleted = true;
+              } else {
+                sessionFiles.set(name, { tool: "bash", count: 1, firstContent: "", latestContent: "", deleted: true });
+              }
+            }
           }
         }
       }
@@ -137,6 +159,7 @@ export default function (pi: ExtensionAPI) {
     const dim = (s: string) => theme.fg("dim", s);
     const muted = (s: string) => theme.fg("muted", s);
     const text = (s: string) => theme.fg("text", s);
+    const strikethrough = (s: string) => theme.strikethrough?.(s) ?? s;
     const section = (s: string) => theme.fg("accent", theme.bold(s));
     const line = () => c.addChild(new Text(dim("  " + "─".repeat(W - 2)), 0, 0));
     const sp = () => c.addChild(new Text("", 0, 0));
@@ -186,10 +209,14 @@ export default function (pi: ExtensionAPI) {
 
     if (sessionFiles.size > 0) {
       for (const [name, info] of sessionFiles) {
-        const diff = computeDiff(info.firstContent, info.latestContent);
-        const add = diff.additions > 0 ? dim(` +${diff.additions}`) : "";
-        const del = diff.deletions > 0 ? dim(` -${diff.deletions}`) : "";
-        c.addChild(new Text(`  ${text(trunc(name, W - 10))}${add}${del}`, 0, 0));
+        if (info.deleted) {
+          c.addChild(new Text(`  ${theme.fg("error", strikethrough(trunc(name, W - 5)))}`, 0, 0));
+        } else {
+          const diff = computeDiff(info.firstContent, info.latestContent);
+          const add = diff.additions > 0 ? dim(` +${diff.additions}`) : "";
+          const del = diff.deletions > 0 ? dim(` -${diff.deletions}`) : "";
+          c.addChild(new Text(`  ${text(trunc(name, W - 10))}${add}${del}`, 0, 0));
+        }
       }
     } else {
       c.addChild(new Text(`  ${dim("no changes")}`, 0, 0));

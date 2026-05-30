@@ -144,16 +144,6 @@ export default function (pi: ExtensionAPI) {
   }
 
 
-  function computeSessionCost(ctx: ExtensionContext): number {
-    let cost = 0;
-    for (const entry of ctx.sessionManager.getEntries()) {
-      if (entry.type !== "message") continue;
-      const msg = entry.message;
-      if (msg.role === "assistant" && msg.usage?.cost?.total) cost += msg.usage.cost.total;
-    }
-    return cost;
-  }
-
   function build(theme: any): Container {
     const c = new Container();
     const dim = (s: string) => theme.fg("dim", s);
@@ -254,8 +244,23 @@ export default function (pi: ExtensionAPI) {
       c.addChild(new Text(`  ${muted("ctx")}   ${miniBar(pct, 6)} ${text(`${pct}%`)}`, 0, 0));
     }
 
-    const cost = ctxRef ? computeSessionCost(ctxRef) : 0;
-    if (cost > 0) c.addChild(new Text(`  ${muted("cost")}  ${text(`$${cost.toFixed(3)}`)}`, 0, 0));
+    // Token usage
+    let totalInput = 0, totalOutput = 0, totalCacheRead = 0;
+    if (ctxRef) {
+      for (const entry of ctxRef.sessionManager.getEntries()) {
+        if (entry.type === "message" && entry.message.role === "assistant") {
+          totalInput += entry.message.usage.input || 0;
+          totalOutput += entry.message.usage.output || 0;
+          totalCacheRead += entry.message.usage.cacheRead || 0;
+        }
+      }
+    }
+    if (totalInput + totalOutput > 0) {
+      const cacheRate = totalInput > 0 ? Math.round((totalCacheRead / totalInput) * 100) : 0;
+      c.addChild(new Text(`  ${muted("in")}    ${text(fmtTokens(totalInput))}`, 0, 0));
+      c.addChild(new Text(`  ${muted("out")}   ${text(fmtTokens(totalOutput))}`, 0, 0));
+      if (totalCacheRead > 0) c.addChild(new Text(`  ${muted("cache")} ${text(`${cacheRate}%`)}`, 0, 0));
+    }
 
     line();
     gap();
@@ -321,6 +326,12 @@ export default function (pi: ExtensionAPI) {
 
   function trunc(s: string, max: number): string {
     return s.length <= max ? s : s.slice(0, max - 1) + "…";
+  }
+
+  function fmtTokens(n: number): string {
+    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+    if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+    return String(n);
   }
 
   function refresh(ctx: ExtensionContext) {

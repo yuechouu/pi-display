@@ -251,7 +251,7 @@ export default function (pi: ExtensionAPI) {
     const usage = ctxRef?.getContextUsage?.();
     if (usage) {
       const pct = usage.percent ?? Math.round(((usage.tokens || 0) / usage.contextWindow) * 100);
-      c.addChild(new Text(`  ${muted("ctx")}   ${miniBar(pct, 10)} ${text(`${pct}%`)}`, 0, 0));
+      c.addChild(new Text(`  ${muted("ctx")}   ${miniBar(pct, 6)} ${text(`${pct}%`)}`, 0, 0));
     }
 
     const cost = ctxRef ? computeSessionCost(ctxRef) : 0;
@@ -269,7 +269,7 @@ export default function (pi: ExtensionAPI) {
       const total = todos.length;
       const pct = Math.round((done / total) * 100);
 
-      c.addChild(new Text(`  ${muted(`${done}/${total}`)} ${miniBar(pct, 10)} ${text(`${pct}%`)}`, 0, 0));
+      c.addChild(new Text(`  ${muted(`${done}/${total}`)} ${miniBar(pct, 6)} ${text(`${pct}%`)}`, 0, 0));
       sp();
 
       const pending = todos.filter((t) => !t.done);

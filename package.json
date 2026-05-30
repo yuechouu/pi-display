@@ -11,7 +11,8 @@
   "pi": {
     "extensions": [
       "./sidebar.ts",
-      "./header.ts"
+      "./header.ts",
+      "./thinking-loader.ts"
     ]
   },
   "keywords": ["pi-extension", "pi-agent", "theme", "sidebar"],

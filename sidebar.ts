@@ -250,7 +250,7 @@ export default function (pi: ExtensionAPI) {
 
     const usage = ctxRef?.getContextUsage?.();
     if (usage) {
-      const pct = usage.percent ?? Math.round(((usage.tokens || 0) / usage.contextWindow) * 100);
+      const pct = Math.round(usage.percent ?? ((usage.tokens || 0) / usage.contextWindow) * 100);
       c.addChild(new Text(`  ${muted("ctx")}   ${miniBar(pct, 6)} ${text(`${pct}%`)}`, 0, 0));
     }
 

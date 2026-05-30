@@ -256,7 +256,7 @@ export default function (pi: ExtensionAPI) {
       }
     }
     if (totalInput + totalOutput > 0) {
-      const cacheRate = totalInput > 0 ? Math.round((totalCacheRead / totalInput) * 100) : 0;
+      const cacheRate = (totalInput + totalCacheRead) > 0 ? Math.round((totalCacheRead / (totalInput + totalCacheRead)) * 100) : 0;
       c.addChild(new Text(`  ${muted("in")}    ${text(fmtTokens(totalInput))}`, 0, 0));
       c.addChild(new Text(`  ${muted("out")}   ${text(fmtTokens(totalOutput))}`, 0, 0));
       if (totalCacheRead > 0) c.addChild(new Text(`  ${muted("cache")} ${text(`${cacheRate}%`)}`, 0, 0));

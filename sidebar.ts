@@ -169,7 +169,8 @@ export default function (pi: ExtensionAPI) {
     let totalContentLines = 0;
     totalContentLines += 3; // PI + line + Session header
     totalContentLines += 4; // name, cwd, git, mode
-    totalContentLines += sessionFiles.size > 0 ? sessionFiles.size + 2 : 3; // Files
+    const displayedFiles = Math.min(sessionFiles.size, 8);
+    totalContentLines += sessionFiles.size > 0 ? displayedFiles + 2 + (sessionFiles.size > 8 ? 1 : 0) : 3; // Files
     totalContentLines += 5; // Model header + name + think + ctx + cost
     totalContentLines += todos.length > 0 ? Math.min(todos.filter(t => !t.done).length, 5) + 4 : 3; // Tasks
     totalContentLines += 3; // Tools header + content
@@ -208,7 +209,13 @@ export default function (pi: ExtensionAPI) {
     sp();
 
     if (sessionFiles.size > 0) {
-      for (const [name, info] of sessionFiles) {
+      // Deleted files first, then by most recent
+      const sorted = [...sessionFiles].sort((a, b) => {
+        if (a[1].deleted !== b[1].deleted) return a[1].deleted ? -1 : 1;
+        return 0;
+      });
+      const MAX_FILES = 8;
+      for (const [name, info] of sorted.slice(0, MAX_FILES)) {
         if (info.deleted) {
           c.addChild(new Text(`  ${theme.fg("error", strikethrough(trunc(name, W - 5)))}`, 0, 0));
         } else {
@@ -217,6 +224,9 @@ export default function (pi: ExtensionAPI) {
           const del = diff.deletions > 0 ? dim(` -${diff.deletions}`) : "";
           c.addChild(new Text(`  ${text(trunc(name, W - 10))}${add}${del}`, 0, 0));
         }
+      }
+      if (sorted.length > MAX_FILES) {
+        c.addChild(new Text(`  ${dim(`+${sorted.length - MAX_FILES} more`)}`, 0, 0));
       }
     } else {
       c.addChild(new Text(`  ${dim("no changes")}`, 0, 0));
